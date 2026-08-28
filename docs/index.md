@@ -1,4 +1,4 @@
-[index.md](https://github.com/user-attachments/files/31577537/index.md)
+[index.md](https://github.com/user-attachments/files/31577968/index.md)
 # Engagement Risk Scoring: Finding Under-Engaging Content Before It Wastes Editorial Time
 
 ## Abstract
@@ -32,6 +32,10 @@ Content teams can't manually review every page for engagement problems, so they 
 **Date window:** development and validation were done on a single 30-day lane snapshot. For warehouse-level checks, a mid-panel month (`month = '2026-03'`) was used deliberately — the dataset's final month (June 2026, the `_sample` table) was treated as a sealed test window and never used to build label logic, per the program's data-use guidance.
 
 **Scale and availability:** the March 2026 daily fact table contains 9,841,378 rows spanning the full calendar month. Of those, only 413,966 rows (~4.2%) have GA4 engagement data available at all (`ga4_data_available = TRUE`) — GSC and GA4 are independently toggled per client, so most rows in the warehouse simply cannot support an engagement label. Within the lane dataset itself, the GA4-available slice used for modeling contained 33,202 rows.
+
+![Data availability funnel](charts/data_funnel.png)
+
+*Figure 1. Only ~4.2% of the daily warehouse ever has the GA4 data this lane depends on — and the modeling slice is smaller still.*
 
 **What I excluded, and why:**
 - Query-level keyword detail — engagement_fix is about reader behavior *after* landing on a page, not which query brought them there.
@@ -81,21 +85,29 @@ The methodologically sound comparison is therefore against **Linear Regression t
 | Linear Regression (same features) | 0.028 |
 | **Random Forest** | **0.171** |
 
+![Model vs baseline comparison](charts/model_comparison.png)
+
+*Figure 2. Random Forest vs. Linear Regression on identical features — same information, ~6x better ranking correlation.*
+
 The Random Forest achieved roughly a **6x improvement** over Linear Regression using the exact same inputs. Because the improvement comes from identical information, the gain is attributable to the model's ability to capture non-linear interactions between features (e.g. what counts as "normal" session volume may vary by content type or word count) — not from having more data available to it.
 
 0.171 is a modest correlation in absolute terms. The model produces some real, usable ranking signal beyond noise, but is not strong enough on its own to fully replace human review of flagged content.
+
+![Feature importance](charts/feature_importance.png)
+
+*Figure 3. Permutation importance on the validation set. Session-volume and search-visibility signals (impressions, word count, CTR) drive the model; content-metadata fields (type, age, intent) contribute no measurable value in this slice.*
 
 ---
 
 ## 5. Limitations
 
-- **Severely restricted usable data.** Only ~4.2% of the daily warehouse rows for a representative month have GA4 data available at all. Any engagement-based analysis, including this one, only ever sees a small, GA4-connected slice of FlyRank's full content population — clients without GA4 connected are invisible to this lane entirely, not just weakly measured.
+- **Severely restricted usable data.** Only ~4.2% of the daily warehouse rows for a representative month have GA4 data available at all (Figure 1). Any engagement-based analysis, including this one, only ever sees a small, GA4-connected slice of FlyRank's full content population — clients without GA4 connected are invisible to this lane entirely, not just weakly measured.
 
 - **No content metadata in the daily warehouse table.** The raw daily fact table used for warehouse-scale verification contains only behavioral measures and hash keys — no content_type, age_tier, word_count, or intent columns. Any content-context signal used in modeling came from the separately maintained lane dataset, not the daily warehouse directly.
 
 - **A systematic model blind spot.** The ten largest validation errors were all "keyword article" content with very low session counts (10–16 sessions), where the model predicted high risk but actual risk was low. Low-traffic pages make the underlying rate metrics unstable, and the model appears to latch onto that instability rather than a genuine pattern.
 
-- **Some features contribute no measurable value.** Permutation importance showed main_intent, age_tier, and content_type all had *negative* importance — shuffling them slightly improved validation performance, meaning the model isn't meaningfully using these fields despite their intuitive relevance. This likely reflects sparse per-category sample sizes rather than a genuine absence of signal.
+- **Some features contribute no measurable value.** As Figure 3 shows, main_intent, age_tier, and content_type all had *negative* permutation importance — shuffling them slightly improved validation performance, meaning the model isn't meaningfully using these fields despite their intuitive relevance. This likely reflects sparse per-category sample sizes rather than a genuine absence of signal.
 
 - **The target is a proxy, not ground truth**, and the correlation achieved is modest. This work can claim observed, directional, decision-support value — a prioritized list a human reviews — and cannot claim causal proof that any specific trait *causes* low engagement, nor can it predict Google's ranking behavior or guarantee that fixing flagged pages will move business outcomes.
 
@@ -107,16 +119,17 @@ Based on the validated model, the recommended action playbook is:
 
 1. **Use the model's ranking as a triage tool, not an automated verdict.** Given the modest absolute correlation, treat the top of the ranked list as "review first," not "act on automatically."
 2. **Discount or manually verify flags on very low-traffic content.** The identified blind spot means pages with under ~20 sessions in the window should be flagged for human judgment rather than trusted at face value.
-3. **Prioritize investigating impressions, word count, and CTR as first-line signals** when triaging a flagged page, since these carried the most real signal in the model.
-4. **Treat GA4 connection status as a prerequisite for this workflow entirely** — expanding GA4 coverage across more clients would directly expand how much of the content population this approach can serve.
+3. **Prioritize investigating impressions, word count, and CTR as first-line signals** when triaging a flagged page, since these carried the most real signal in the model (Figure 3).
+4. **Treat GA4 connection status as a prerequisite for this workflow entirely** — expanding GA4 coverage across more clients would directly expand how much of the content population this approach can serve (Figure 1).
 5. **Revisit the proxy definition in future iterations.** Because engagement_rate alone conflates "quick and satisfied" with "frustrated and gone," a future version should explore supplementary signals (e.g. return-visit rate, scroll depth combined with dwell time) to sharpen the target before scaling this approach.
 
 ---
 
 ## 7. Artifacts
 
-- Feature importance chart (`work/outputs/feature_importance.png`)
-- Model vs. baseline comparison table (Section 4, above)
+- **Figure 1** — Data availability funnel (`charts/data_funnel.png`)
+- **Figure 2** — Model vs. baseline comparison (`charts/model_comparison.png`)
+- **Figure 3** — Permutation feature importance (`charts/feature_importance.png`)
 - Worst-10-prediction error table, used to identify the low-traffic blind spot (generated in `work/notebooks/w05_model.ipynb`)
 - Week 4 baseline ranked queue (`work/outputs/baseline_action_score.csv`, regenerated on each notebook run per the project's data-hygiene rules — not committed as a static file)
 
